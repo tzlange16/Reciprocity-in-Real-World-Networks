@@ -20,13 +20,13 @@ source("Code/k_means.R")
 
 #function for calculating members' total in-degrees and out-degrees for Fixed Effect model
 degree.balance <- function(graph){#function that finds the net received of each person for an order
-  In <- igraph::degree(graph, mode="in")
-  Out <- igraph::degree(graph, mode="out")
-  Purchaser <- igraph::get.vertex.attribute(graph,"name")
-  SPR <- log((1+Out)/(1+In))
-  date <- as_date(get.graph.attribute(graph, "Date"))
-  surplus <- tibble(Purchaser = Purchaser,In.Degree = In, Out.Degree = Out,SPR = SPR)
-  surplus$Date <- date
+  In <- igraph::degree(graph, mode="in")#extract each users in degree
+  Out <- igraph::degree(graph, mode="out")#extract each users out degree
+  Purchaser <- igraph::get.vertex.attribute(graph,"name")#get purchaser's anonymized name
+  SPR <- log((1+Out)/(1+In))#calculate shared purchase ratio
+  date <- as_date(get.graph.attribute(graph, "Date"))#add date
+  surplus <- tibble(Purchaser = Purchaser,In.Degree = In, Out.Degree = Out,SPR = SPR)#create tibble in degrees, out degrees, and shared purchase ratio
+  surplus$Date <- date#add date to tibble
   return(surplus)
 }
 
@@ -41,7 +41,7 @@ all.clubs.1 <- dplyr::mutate(all.clubs, db = map(graphs, ~map_df(.x,degree.balan
   rename(degree.balance = data)#rename column named "data" from nesting process to "degree.balance"
 
 
-#calculate Within/between order direct/indirect reciprocity & Reciprocal stability using recip.stab function from "Direct reciprocity.R"
+#calculate Within/between order direct/indirect reciprocity & Reciprocal stability using recip.stab function from "reciprocity coutns and stability.R"
 all.clubs.2 <- mutate(all.clubs,stab = map(graphs,stability))%>%
   select(`Club Number`,stab)
 
@@ -57,14 +57,14 @@ select(all.clubs,`Club Number`,degree.balance)%>%#select degree balance data
   group_by(`Club Number`,Purchaser)%>%#group by club name and purchaser
   summarize_at(.vars = c("In.Degree","Out.Degree"),.funs = sum)->RE#aggregate each purchaser's in and out degree
 
-lme4::lmer(Out.Degree ~ In.Degree + (1|`Club Number`) ,data=RE)->re.model
+lme4::lmer(Out.Degree ~ In.Degree + (1|`Club Number`) ,data=RE)->re.model#mixed effects model for all edges
 
 summary(re.model)#summary of model
 
 #Singular assistance edges
 select(all.clubs,`Club Number`,single.assistance)%>%#select singular assistance data
   unnest()->RE.SA#unnest data
-RE.SA.model <- lme4::lmer(Given~Received+(1|`Club Number`),data = RE.SA)#estimate Fixed effects model
+RE.SA.model <- lme4::lmer(Given~Received+(1|`Club Number`),data = RE.SA)#estimate mixed effects model for singular assistance edges
 summary(RE.SA.model)#summary of model
 
 #Markov Chain-----
