@@ -1,0 +1,1782 @@
+---
+title: 'Supplemental Material: Cooperation in Economic Networks'
+author: "Lange, Smolla, Waring 2021"
+date: '2021'
+header-includes:
+      - \usepackage{dcolumn}
+output:
+  pdf_document:
+    fig_caption: yes
+    extra_dependencies: ["float"]
+    
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning=FALSE,message=FALSE)
+knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(cowplot)
+library(kableExtra)
+
+source("Paper Scripts/k_means.R")
+load("Reciprocity.Rdata")
+
+```
+
+
+# SM 1. Club Level Summary Statistics
+
+```{r summary stats,warning=FALSE,message=FALSE}
+mutate(all.clubs, Orders = map(graphs, ~length(.x)))%>%
+  mutate(Members = map(member.types, ~filter(.x, !is.na(type))%>%nrow()))%>%
+  select(`Club Number`,Orders,Members,stab)%>%
+  unnest()%>%
+  ungroup()%>%
+  mutate_at(.vars = 4:11,.funs = round,digits = 2)->t
+  kable(t)%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+# SM 2. Mixed Effects Models 
+
+
+```{r Mixed effects 1, echo = FALSE, results='asis'} 
+select(all.clubs,`Club Number`,degree.balance)%>%#select degree balance data
+  unnest()%>%#unnest
+  group_by(`Club Number`,Purchaser)%>%#group by club name and purchaser
+  summarize_at(.vars = c("In.Degree","Out.Degree"),.funs = sum)->RE#aggregate each purchaser's in and out degree
+
+rename(RE,`Out Degree` = Out.Degree,
+       `In Degree` = In.Degree)->RE
+
+lme4::lmer(`Out Degree`~`In Degree` + (1|`Club Number`) ,data=RE)->re.model
+
+select(all.clubs,`Club Number`,single.assistance)%>%#select singular assistance data
+  unnest()->RE.SA#unnest data
+rename(RE.SA,`Out Degree` = Given,
+       `In Degree` = Received)->RE.SA
+RE.SA.model <- lme4::lmer(`Out Degree`~`In Degree`+(1|`Club Number`),data = RE.SA)#estimate Fixed effects model
+
+broom.mixed::tidy(re.model)%>%filter(effect == "fixed")->ae
+broom.mixed::tidy(RE.SA.model)%>%filter(effect == "fixed")->sae
+sd_re<-round(as.numeric(attributes(lme4::VarCorr(re.model)$"`Club Number`")$stddev), 2)
+sd_sa_re<-round(as.numeric(attributes(lme4::VarCorr(RE.SA.model)$"`Club Number`")$stddev), 2)
+REML<-round(re.model@devcomp$cmp[7],2)
+REML_sa <- round(RE.SA.model@devcomp$cmp[7],2)
+mod.stats <- tribble(~stat, ~re.model, ~RE.SA.model,
+                     "Random Effects:",NA,NA,
+                     "Clubs",35L,13L,
+                     "Standard Deviation",sd_re,sd_sa_re,
+                     "Observations", nrow(RE),nrow(RE.SA),
+                     "REML",REML,REML_sa,
+                     "AIC",round(AIC(re.model),2),round(AIC(RE.SA.model),2))
+
+stargazer::stargazer(re.model,RE.SA.model,
+                     coef = list(ae$estimate,sae$estimate),
+                     se = list(ae$std.error,sae$std.error),
+                     no.space = TRUE,
+                     header=FALSE,
+                     align = TRUE,
+                     single.row = FALSE,
+                     font.size = "small",
+                     intercept.bottom = F,
+                     column.labels = c("All Edges","Singular Assistance\nEdges"),
+                     omit.table.layout = "s",
+                     # ...but supply your own that you created (with random effects)
+                     add.lines = lapply(1:nrow(mod.stats), function(i) unlist(mod.stats[i, ])))
+
+```
+\newpage
+
+# SM 3. Club Summaries
+
+
+## Club 1
+
+
+```{r club 1 centers}
+i<-1
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+  left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+
+\newpage
+
+## Club 2
+
+
+```{r club 2 centers}
+i<-2
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+
+
+\newpage
+
+## Club 3
+
+
+```{r club 3 centers}
+i<-3
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 4
+
+
+```{r club 4 centers}
+i<-4
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 5
+
+
+```{r club 5 centers}
+i<-5
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 6
+
+
+```{r club 6 centers}
+i<-6
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 7
+
+
+```{r club 7 centers}
+i<-7
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 8
+
+
+```{r club 8 centers}
+i<-8
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 9
+
+
+```{r club 9 centers}
+i<-9
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 10
+
+
+```{r club 10 centers}
+i<-10
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 11
+
+
+```{r club 11 centers}
+i<-11
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 12
+
+
+```{r club 12 centers}
+i<-12
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 13
+
+
+```{r club 13 centers}
+i<-13
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 14
+
+
+```{r club 14 centers}
+i<-14
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 15
+
+
+```{r club 15 centers}
+i<-15
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 16
+
+
+```{r club 16 centers}
+i<-16
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 17
+
+
+```{r club 17 centers}
+i<-17
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 18
+
+
+```{r club 18 centers}
+i<-18
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 19
+
+
+```{r club 19 centers}
+i<-19
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 20
+
+
+```{r club 20 centers}
+i<-20
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 21
+
+
+```{r club 21 centers}
+i<-21
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 22
+
+
+```{r club 22 centers}
+i<-22
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 23
+
+
+```{r club 23 centers}
+i<-23
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 24
+
+
+```{r club 24 centers}
+i<-24
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 25
+
+
+```{r club 25 centers}
+i<-25
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 26
+
+
+```{r club 26 centers}
+i<-26
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 27
+
+
+```{r club 27 centers}
+i<-27
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+
+\newpage
+
+## Club 28
+
+
+```{r club 28 centers}
+i<-28
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 29
+
+
+```{r club 29 centers}
+i<-29
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 30
+
+
+```{r club 30 centers}
+i<-30
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 31
+
+
+```{r club 31 centers}
+i<-31
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 32
+
+
+```{r club 32 centers}
+i<-32
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 33
+
+
+```{r club 33 centers}
+i<-33
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 34
+
+
+```{r club 34 centers}
+i<-34
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.25)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
+
+\newpage
+
+## Club 35
+
+
+```{r club 35 centers}
+i<-35
+d <- as_tibble(all.clubs$degree.balance[[i]])
+clust <- k_means(d$SPR)
+d$c<-as_factor(clust$cluster)
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%left_join(d, by = c("abbrev"="c"))->d
+d$SPR<-exp(as.numeric(d$SPR))
+ggplot(d,aes(x=SPR,fill=type))+
+  geom_histogram(binwidth = 0.025)+
+  theme_classic()+
+  scale_x_log10()+scale_fill_manual(values = c("#DCE319FF","#3CBB75FF","#33638DFF"))+
+  labs(x=expression(paste("shared purchase ratio  ",frac(k["it"]^{'out'},k["it"]^{'in'}) ,"  (log scaled; binwidth = 0.025)")),
+       y="frequency",
+       fill = "role",
+       title = "Shared purchase balance clusters")+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = .5))
+
+all.clubs$member.types[[i]]%>%
+  ungroup()%>%
+  count(type)%>%
+  filter(!is.na(type))->ct
+tibble(type = c("Beneficiary","Reciprocator","Helper"),center = clust$centers,abbrev = c("B","R","H"))%>%
+         left_join(ct,by = c("abbrev" = "type"))%>%
+  select(type,center,n)%>%
+  replace_na(list(n = 0))%>%
+  rename(members = n)%>%
+  kable(.,caption = "Cluster centers and number of members identified as each type")%>%
+    kable_styling(latex_options = "HOLD_position")
+
+all.clubs$markov.matrix[[i]]%>%
+  group_by(from,to)%>%
+  summarize(members = n(),prob = round(mean(prob),digits = 2))%>%
+  spread(to,prob)%>%
+  select(from,B,R,H,members)->m
+
+m[c(1,3,2),]->m
+colnames(m)<-c("Role t","P(Helper, t+1)","P(Reciprocator t+1)","P(Beneficiary t+1)","Members who assumed Role")
+m$`Role t`<- c("Helper","Reciprocator","Beneficiary")
+kable(m,caption = "Club Mean Markov Transiton Probabilities")%>%
+    kable_styling(latex_options = "HOLD_position")
+```
