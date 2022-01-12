@@ -11,10 +11,10 @@ library(sandwich)
 library(lmtest)
 library(lubridate)
 #load data
-load("Reciprocity.Rdata")
+load("Data/Reciprocity.Rdata")
 #Read necessary functions from Direct Reciprocity.R
-source("Direct reciprocity.R")
-source("Paper Scripts/k_means.R")
+source("Code/reciprocity counts and stability.R")
+source("Code/k_means.R")
 #===================
 #Data Processing ------
 

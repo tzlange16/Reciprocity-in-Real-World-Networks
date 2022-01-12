@@ -3,7 +3,7 @@
 library(tidyverse)
 library(igraph)
 library(cowplot)
-load("Reciprocity.Rdata")
+load("Data/Reciprocity.Rdata")
 source("Direct reciprocity.R")
 
 names(all.clubs$member.types)<-all.clubs$Club

@@ -17,7 +17,7 @@ f <- function(df){
 
                                  
 #function to extract edge list                                  
-edge.list <- function(x){
+edge.lists <- function(x){
   ifelse(nrow(get.edgelist(x))==0,
          return(tibble()),
          return(as_tibble(get.edgelist(x))%>%
@@ -25,7 +25,7 @@ edge.list <- function(x){
 }
 
 stability <- function(dta){
-  e <- map_df(dta,~f2(.x))#extract edge.lists
+  e <- map_df(dta,~edge.lists(.x))#extract edge.lists
   
   colnames(e) <- c("from","to","date")#rename columns
   
