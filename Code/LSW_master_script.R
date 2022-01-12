@@ -41,6 +41,7 @@ all.clubs.1 <- dplyr::mutate(all.clubs, db = map(graphs, ~map_df(.x,degree.balan
   rename(degree.balance = data)#rename column named "data" from nesting process to "degree.balance"
 
 
+
 #calculate Within/between order direct/indirect reciprocity & Reciprocal stability using recip.stab function from "reciprocity coutns and stability.R"
 all.clubs.2 <- mutate(all.clubs,stab = map(graphs,stability))%>%
   select(`Club Number`,stab)
