@@ -41,7 +41,7 @@ mutate(clusters, point = as.numeric(point))%>%#make identifiers neumeric
   arrange(point)->clusters#reorder SPRS according to original order
 
 cluster <- clusters$cluster#assign cluster assignments as vector
-centers <- c(b_center,0,h_center)#assign cluster centers as a vector
+centers <- tibble(type = c("Beneficiary","Reciprocator","Helper"), center = c(b_center,0,h_center))#assign cluster centers as a vector
 
 return(list(cluster = cluster, centers = centers))#return cluster assigments and cluster centers as a list object
 

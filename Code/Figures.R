@@ -3,37 +3,60 @@
 library(tidyverse)
 library(igraph)
 library(cowplot)
+library(extrafont)
+loadfonts(device = "win")
 load("Data/Reciprocity.Rdata")
-source("Direct reciprocity.R")
+source("Code/reciprocity counts and stability.R")
 
 names(all.clubs$member.types)<-all.clubs$Club
 
-#Figure 1 (get from Tim)----
-par(mfrow=c(1,3))
-#some items
-items <- c("A","B","C","D","E","F","H","I","J")
-#some purchasers
-purchasers <- 1:9
-#some purchases
-set.seed(1)
-matrix(rbinom(81,1,.4),ncol=9,nrow=9)->m
-colnames(m)<-items
-rownames(m)<-purchasers
-#make graph of purchases
-g<-graph_from_incidence_matrix(m)
+select(all.clubs,`Club Number`,degree.balance)%>%
+  unnest()%>%
+  group_by(`Club Number`)%>%
+  summarize(start = min(Date),end = max(Date))%>%
+  mutate(time = lubridate::interval(start,end)/lubridate::years(1))%>%
+  summarize(sum(time))
 
+select(all.clubs,`Club Number`,degree.balance)%>%#select degree balance data
+  unnest()%>%#unnest
+  group_by(`Club Number`,Purchaser)%>%#group by club name and purchaser
+  summarize_at(.vars = c("In.Degree","Out.Degree"),.funs = sum)->RE#aggregate each purchaser's in and out degree
+
+rename(RE,`Out Degree` = Out.Degree,
+       `In Degree` = In.Degree)->RE
+
+lme4::lmer(`Out Degree`~`In Degree` + (1|`Club Number`) ,data=RE)->re.model
+
+summary(re.model)
+
+#Figure 1 (get from Tim)----
+#set graphical parameters
+par(mfrow=c(1,4),mar = c(5,.5,4,.5),family = "Arial")
+#simulate sample order
+#create some items
+items <- c("A","B","C","D","E","F","H","I","J")
+#create some some purchasers
+purchasers <- 1:9
+#create some purchases
+set.seed(1)
+matrix(rbinom(81,1,.4),ncol=9,nrow=9)->m#adjacency of ones and zeros
+colnames(m)<-items#name columns as items
+rownames(m)<-purchasers#name rows as purchasers
+#make graph of purchases
+g<-graph_from_incidence_matrix(m)#create graph from matrix
+#plot first graph as bipartite network of items and purchasers
 plot.igraph(g,layout = layout.bipartite(g),vertex.label = NA,edge.color = "grey25", vertex.shape = c(rep("circle",9),rep("square",9)),vertex.color = c(rep("red",9),rep("blue",9)))
-legend(x=-.75,y=1.4,legend =c("members","items"),pch = c(16,15), col = c("red","blue"),horiz = TRUE,,cex = 1.5,bty = "n",pt.cex = 3.5)
-legend(x=-.75,y=1.4,legend =c("members","items"),pch = c(21,22),horiz = TRUE,bty = "n",cex = 1.5,pt.cex = 3.5)
-bipartite.projection(g)$proj1 ->up
-get.adjacency(up,attr = "weight")->m2
-graph_from_adjacency_matrix(m2,mode = "undirected")->up
-layout.fruchterman.reingold(up)->coords
-as.matrix(m2)%>%
+legend(-.75,-1,legend = c("Members","Items"),pch = c(21,22),cex=2,border = "white",bg = "transparent",box.lty=0,pt.bg = c("red","blue"),pt.cex = 3.5)#add legend
+text(0,1.65,labels = "A",cex=3)#add label
+bipartite.projection(g)$proj1 ->up#project bipartite into item and member networks
+get.adjacency(up,attr = "weight")->m2#get the adjacency of member network to make new undirected member network
+graph_from_adjacency_matrix(m2,mode = "undirected")->up#create undirected member network
+layout.fruchterman.reingold(up)->coords#store coordinates of member network for identical layout
+as.matrix(m2)%>%#
   as.data.frame(row.names = TRUE)%>%
   mutate(from=row_number())%>%
   gather(key = "to",value = "n.edges",1:9)%>%
-  filter(n.edges>0)->edges
+  filter(n.edges>0)#->edges
 edge.list <- matrix(ncol = 2)
 for(i in 1:nrow(edges)){
 dyad <- c(edges$from[i],edges$to[i])
@@ -44,15 +67,24 @@ edge.list[-nrow(edge.list),]->edge.list
 graph_from_edgelist(edge.list,directed = FALSE)%>%
   simplify(remove.multiple = FALSE)%>%
   plot(layout = coords,vertex.label = NA,vertex.color = "red",edge.color = "grey25")
-
+text(0,1.65,labels = "B",cex=3)
 graph_from_edgelist(edge.list)%>%
   simplify(remove.multiple = FALSE)%>%
   plot.igraph(layout = coords, edge.arrow.size = .5, vertex.label = NA, vertex.color = "red",edge.color = "grey25")
+text(0,1.65,labels = "C",cex=3)
+lay <- cbind(c(-.5,.5,0),c(-.5,-.5,.5))
+m <- matrix(1,nrow=3,ncol=3)
+row.names(m)<-c("B","H","R")
+colnames(m)<-c("B","H","R")
+g <- graph_from_adjacency_matrix(m)
+plot.igraph(g,layout = lay,edge.loop.angle=c(2.25,0,0,0,.75,0,0,0,4.75),edge.curved=TRUE,vertex.size = 75, vertex.label.color = "black",vertex.label.cex = 2,
+            edge.color = "grey25",vertex.color = "white",vertex.label.degree = c(pi/2,pi/2,-pi/4),vertex.label.family = "Arial",edge.arrow.size=.45)
+text(0,2.1,labels = "D",cex=3)
 
 #Figure 2----
-select(types,name,stab)%>%#select out reciprocity proportions &stability
+select(all.clubs,`Club Number`,stab)%>%#select out reciprocity proportions &stability
   unnest()%>%#unnest tibble
-  select(name,pwd,pbd,pwi,pbi)%>%#select club name and reciprocity type proportions
+  select(`Club Number`,pwd,pbd,pwi,pbi)%>%#select club name and reciprocity type proportions
   mutate(pur = 1-pwd-pbd-pwi-pbi)%>%#create percent unreciprocated
   gather("Key","Value",2:6)%>%#transform data to long form
   mutate(time = ifelse(Key %in% c("pwd","pwi"),#define time scale of reciprocity:
@@ -76,22 +108,60 @@ group_by(fig,`T-D`)%>%summarize(mean = paste("Mean = ",round(mean(Value),2),sep 
 
 fig.text$mean[1]<-"Mean = 0.60"
 
-group_by(fig,`T-D`)%>%summarize(mean = mean(Value))%>%
+group_by(fig,`T-D`)%>%summarize(mean = mean(Value)*100)%>%
   right_join(fig)%>%
-ggplot(aes(x=Value))+
-  geom_histogram(color = "grey25", binwidth = .01,alpha = .75)+
-  scale_x_continuous(limits=c(0,1))+
-  scale_y_continuous(position="right")+
-  facet_grid(`T-D`~.,switch = "both")+
-  geom_vline(aes(xintercept=mean),size = 1,)+
-  geom_text(data = fig.text, mapping = aes(x=x,y=y,label = mean), family = "Calibri")+
-  labs(x="frequency (proportion of edges)",y="number of clubs")+
+ggplot(aes(y=Value*100,x=as_factor(`T-D`)))+
+  geom_jitter(color = "grey25",alpha = .75,width = .25,shape = 16,height = 0)+
+  scale_y_continuous(limits = c(-1,80),breaks = c(0,20,40,60,80),labels=c("  0"," 40"," 60"," 80"))+
+  geom_errorbar(aes(ymin=mean,ymax=mean),width=1)+
   theme_classic()+
-  theme(text = element_text(family = "Calibri"),
-        legend.position = "none")
+  labs(x="",y="percent of total edges")+
+  theme(axis.text.x = element_blank(),
+        legend.position = "none",
+        strip.text = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_text(family = "Arial"),
+        axis.title.y = element_text(family = "Arial"))->f1
+
+ggsave("raw_figs/reciprocity_scatter_raw.pdf",height = 2.5,width = 5,units = "in",device = cairo_pdf)
+
+select(all.clubs,`Club Number`,stab)%>%#select out reciprocity proportions &stability
+  unnest()%>%
+  select(`Club Number`,contains("CV"))%>%
+  gather("Key","Value",2:5)%>%#transform data to long form
+  mutate(time = ifelse(Key %in% c("CV.pwd","CV.pwi"),#define time scale of reciprocity:
+                       "W",#within order
+                       "B"),#between order
+         direction = ifelse(Key %in% c("CV.pwd","CV.pbd"),#define directness of reciprocity
+                            "DR",#direct reciprocity
+                            "IR"))%>%#indirect reciprocity
+  mutate(time = ifelse(Key == "pur",#define unreciprocated edges temporally 
+                       "U",#named not for figure labeling
+                       time),
+         direction = ifelse(Key == "pur",#define unreciprocated edges directionally
+                            "R",#named reciprocated for figure
+                            direction))%>%
+  unite("T-D",time,direction,sep = "")%>%
+  mutate(`T-D` = as_factor(`T-D`))->fig.2
+
+group_by(fig.2,`T-D`)%>%
+  summarize(mean = mean(Value,na.rm = TRUE),min = min(Value,na.rm = TRUE),max=max(Value,na.rm = TRUE))%>%
+  bind_rows(tibble(`T-D`="UR",mean=NA,min=NA,max=NA))%>%
+  left_join(fig.2)%>%
+  ggplot(aes(y=Value,x=reorder(`T-D`,mean)))+
+  geom_violin()+
+  geom_point(aes(y=mean), shape = 18,size=4)+
+  theme_classic()+
+  labs(x="",y=bquote("Reciprocity C"["v"]))+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.text = element_text(family = "Arial"),
+        axis.title = element_text(family = "Arial"))->f2
+plot_grid(f1,f2,ncol=1,align="v",axis = "lh",labels=c("A","B"),vjust = 1,scale=1)
+ggsave2("raw_figs/recip_combined_raw.pdf",height=5,width = 5,units = "in", device = cairo_pdf)
 
 
-ggsave("reciprocal_edges.svg", width = 6.5, height = 4,units = "in", path = paste(getwd(),"/Figs/",sep = ""))
+#ggsave("raw_figs/reciprocity_cv_raw.pdf",height = 2.5,width = 5, units = "in",device = cairo_pdf)
 
 
 
@@ -128,27 +198,30 @@ yellow<-"#DCE319FF"
 green<-"#3CBB75FF"
 blue<-"#33638DFF"
 
-dplyr::select(types,name,types)%>%
+dplyr::select(types,`Club Number`,types)%>%
   unnest()%>%
   replace_na(list(B=0,H=0,R=0))%>%
   arrange(desc(R))->fig
 
 
-
-  rownames_to_column(fig,"Club Number")%>%
-  mutate(`Club Number` = as.numeric(`Club Number`))%>%
-  gather("Member Type","percent composition",4:6)%>%
+ 
+  gather(fig,"Member Type","percent composition",3:5)%>%
   ggplot(aes(x = as_factor(`Club Number`) , y = `percent composition`, fill = `Member Type`))+
-  geom_bar(stat = "identity")+
-  scale_x_discrete(labels = c("1","2*",as.character(3:4),"5*",as.character(6:27),"28*",as.character(29:35)))+
-  scale_fill_manual(values = c(yellow,blue,green))+
+  geom_bar(stat = "identity",color="black",size=.05)+
+  scale_fill_manual(values = c("black","white","grey50"),labels = c("beneficiary","helper","reciprocator"))+
+    scale_y_continuous(labels = c(0,25,50,75,100))+
   theme_classic()+
-  labs(x = "club number")+
+  labs(x = "club",
+       fill = "",
+       )+
   theme(legend.position = "bottom",
-        axis.text.x = element_text(size = 7),
-        text = element_text(family = "Calibri"))
+        axis.text.x = element_blank(),
+        text = element_text(family = "Arial",size=14),
+        axis.title = element_text(size=16),
+        legend.text = element_text(size=16)
+        )
 
-ggsave("3-C.svg", width = 5.5, height = 3,units = "in", path = paste(getwd(),"/Figs/Figure 3/",sep = ""))#save
+ggsave("raw_figs/3-C.pdf", width = 5.5, height = 3,units = "in")#save
 
 #3-A Example clubs - networks ----
 
@@ -236,7 +309,7 @@ graph_from_adjacency_matrix(m,weighted = TRUE)->g
 
 V(g)$color =  c(yellow,blue,green)
 V(g)$weight= .5+colSums(m)
-plot.igraph(g,edge.curved = TRUE,layout = lay, vertex.size = 40*V(g)$weight,edge.loop.angle=c(3,0,0,0,0,4.75),
+plot.igraph(g,edge.curved = TRUE,layout = lay, vertex.size = 40*V(g)$weight,edge.loop.angle=c(3,0,0,0,0,0,0,0,4.75),
             edge.width = E(g)$weight*4,edge.color = "grey60",
             edge.label=round(E(g)$weight, 2),edge.label.font = 2,edge.label.cex=1.5,
             edge.label.color = "black", vertex.label.color = "black",edge.label.family = "Calibri",
@@ -276,3 +349,61 @@ rownames_to_column(fig,"Club Number")%>%
   dplyr::select(`Club Number`,name)%>%
   left_join(dplyr::select(all.clubs))->club.numbers
 save(club.numbers, file="club_numbers.Rdata")
+
+
+all.clubs$degree.balance[[1]]$SPR->x
+
+
+
+k_means(all.clubs$degree.balance[[1]]$SPR)
+
+
+mutate(all.clubs, centers = map(degree.balance, ~pluck(k_means(.x$SPR),"centers")))%>%
+  select(`Club Number`,centers)%>%
+  unnest()%>%
+  spread(type,center)
+
+select(all.clubs,`Club Number`, member.types)%>%
+  unnest()%>%
+  group_by(`Club Number`)%>%
+  count(type)%>%
+  spread(type,n,fill=0)%>%
+  rename(beneficiaries = B,
+         helpers = H,
+         reciprocators = R, 
+         Unclassified=`<NA>`)
+
+
+lay <- cbind(c(-.5,.5,0),c(-.5,-.5,.5))
+
+m <- matrix(1,nrow=3,ncol=3)
+row.names(m)<-c("B","H","R")
+colnames(m)<-c("B","H","R")
+g <- graph_from_adjacency_matrix(m)
+plot.igraph(g,layout = lay,edge.loop.angle=c(3,0,0,0,0,0,0,0,4.75),edge.curved=TRUE,vertex.size = 50, vertex.label.color = "black",vertex.label.cex = 1,
+            edge.color = "grey25",vertex.color = "white",vertex.label.degree = c(pi/2,pi/2,-pi/4),edge.label.family = "Calibri")
+
+
+plot.igraph(g,edge.curved = TRUE,layout = lay, vertex.size = 50*V(g)$weight,edge.loop.angle=c(3,0,0,0,0,0,0,0,4.75),
+            edge.width = E(g)$weight*4,edge.color = "grey55",vertex.label.degree = c(pi/2,pi/2,-pi/4),
+            edge.label=paste(E(g)$),edge.label.font = 2,edge.label.cex=1.5,
+            edge.label.color = "black", vertex.label.color = "black",edge.label.family = "Calibri",
+            vertex.label.family="Calibri",vertex.label.font = 2,vertex.label.cex=1.5)
+
+par(mfrow=c(1,1),mar = c(5,0,4,0),family = "Arial")
+select(all.clubs,markov.matrix)%>%
+  unnest()%>%
+  group_by(from,to)%>%
+  summarize(sum=sum(prob),n=n())%>%
+  mutate(mean=round(sum/n,2)*100)->edges
+group_by(edges,to)%>%
+  summarize(weight = sum(mean))->verticies
+
+graph_from_data_frame(edges,vertices = verticies)->g
+
+plot.igraph(g,edge.curved = TRUE,layout = lay, vertex.size = V(g)$weight,edge.loop.angle=c(3,0,0,0,0,0,0,0,4.75),
+            edge.color = "grey55",vertex.label.degree = c(pi/2,pi/2,-pi/4),vertex.color = c("black","white","grey50"),vertex.label.color = c("white","black","black"),
+            vertex.label.cex = c(2,2,4),
+            edge.label=paste(E(g)$mean,"%",sep = ""),edge.label.font = 2,edge.label.cex=1.25,
+            edge.label.color = "black", vertex.label.color = "black",edge.label.family = "Calibri",
+            vertex.label.family="Calibri",vertex.label.font = 2,vertex.label.cex=1.5)
