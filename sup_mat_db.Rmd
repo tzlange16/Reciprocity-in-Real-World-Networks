@@ -1,0 +1,131 @@
+---
+title: 'Supplemental Material: Reciprocity supports cooperation in real-world economic interactions'
+header-includes:
+      - \usepackage{dcolumn}
+      
+output:
+  pdf_document:
+    fig_caption: yes
+    extra_dependencies: ["float"]
+    
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,warning=FALSE,message=FALSE)
+knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(cowplot)
+
+source("Code/k_means.R")
+load("Data/Reciprocity.Rdata")
+rename(all.clubs, Club = `Club Number`)->all.clubs
+
+```
+
+
+
+```{r summary stats,warning=FALSE,message=FALSE}
+options(knitr.kable.NA = '')
+mutate(all.clubs, Orders = map(graphs, ~length(.x)))%>%
+  mutate(Members = map(member.types, ~filter(.x, !is.na(type))%>%nrow()))%>%
+  select(Club,Orders,Members,stab)%>%
+  unnest()%>%
+  ungroup()%>%
+  mutate_at(.vars = 4:11,.funs = round,digits = 2)%>%
+  mutate(Club = as_factor(Club))%>%
+  select(Club,Orders, Members, pwd,pbd,pwi,pbi,CV.pwd,CV.pbd,CV.pwi,CV.pbi)->t
+  colnames(t)[4:11]<-rep(c("DWR","DBR","IWR","IBR"),2)
+  colSums(t[,2:3],na.rm = TRUE)->sums
+  round(colMeans(t[4:11],na.rm = TRUE),2)->means
+  rbind(t,c(36,sums,means))->t
+  kbl(t,booktabs = TRUE,caption = "Reciprocal Edge Classifications and Coefficients of Variation")%>%
+    kable_styling(latex_options = c("striped"))%>%
+    add_header_above(c(" "=3,"Percent of Total Edges"=4,"Coefficient of Variation"=4))%>%
+    pack_rows("Totals",36,36)
+    
+  
+```
+
+```{r Mixed effects 1, echo = FALSE, results='asis'} 
+select(all.clubs,Club,degree.balance)%>%#select degree balance data
+  unnest()%>%#unnest
+  group_by(Club,Purchaser)%>%#group by club name and purchaser
+  summarize_at(.vars = c("In.Degree","Out.Degree"),.funs = sum)->RE#aggregate each purchaser's in and out degree
+
+rename(RE,`Out Degree` = Out.Degree,
+       `In Degree` = In.Degree)->RE
+
+lme4::lmer(`Out Degree`~`In Degree` + (1|Club) ,data=RE)->re.model
+
+select(all.clubs,Club,single.assistance)%>%#select singular assistance data
+  unnest()->RE.SA#unnest data
+rename(RE.SA,`Out Degree` = Given,
+       `In Degree` = Received)->RE.SA
+RE.SA.model <- lme4::lmer(`Out Degree`~`In Degree`+(1|Club),data = RE.SA)#estimate Fixed effects model
+
+broom.mixed::tidy(re.model)%>%filter(effect == "fixed")->ae
+broom.mixed::tidy(RE.SA.model)%>%filter(effect == "fixed")->sae
+sd_re<-round(as.numeric(attributes(lme4::VarCorr(re.model)$Club)$stddev), 2)
+sd_sa_re<-round(as.numeric(attributes(lme4::VarCorr(RE.SA.model)$Club)$stddev), 2)
+REML<-round(re.model@devcomp$cmp[7],2)
+REML_sa <- round(RE.SA.model@devcomp$cmp[7],2)
+mod.stats <- tribble(~stat, ~re.model, ~RE.SA.model,
+                     "Random Effects:",NA,NA,
+                     "Clubs",35L,13L,
+                     "Standard Deviation",sd_re,sd_sa_re,
+                     "Observations", nrow(RE),nrow(RE.SA),
+                     "REML",REML,REML_sa,
+                     "AIC",round(AIC(re.model),2),round(AIC(RE.SA.model),2))
+
+stargazer::stargazer(re.model,RE.SA.model,
+                     coef = list(ae$estimate,sae$estimate),
+                     se = list(ae$std.error,sae$std.error),
+                     no.space = TRUE,
+                     header=FALSE,
+                     align = TRUE,
+                     single.row = FALSE,
+                     font.size = "small",
+                     intercept.bottom = F,
+                     column.labels = c("All Edges","Singular Assistance\nEdges"),
+                     omit.table.layout = "s",
+                     dep.var.labels = "Out Degree",
+                     covariate.labels = c("Global Mean Intercept","In Degree"),
+                     # ...but supply your own that you created (with random effects)
+                     add.lines = lapply(1:nrow(mod.stats), function(i) unlist(mod.stats[i, ])),
+                     title = "Mixed Effects Model")
+
+```
+
+
+```{r cluster centers,echo = FALSE,warning=FALSE,fig.align='center'}
+mutate(all.clubs, centers = map(degree.balance, ~pluck(k_means(.x$SPR),"centers")))%>%
+  select(Club,centers)%>%
+  unnest()%>%
+  spread(type,center)%>%
+  select(Club,Beneficiary,Reciprocator,Helper)%>%
+  mutate(Beneficiary = round(Beneficiary,3),
+         Helper = round(Helper,3))%>%
+  kableExtra::kbl(caption = "SPR Cluster Centers",align = c("l","c","c","c"),booktabs = TRUE)
+
+```
+
+```{r member types,echo = FALSE,warning=FALSE,fig.align='center'}
+select(all.clubs,Club, member.types)%>%
+  unnest()%>%
+  group_by(Club)%>%
+  count(type)%>%
+  spread(type,n,fill=0)%>%
+  rename(Beneficiaries = B,
+         Helpers = H,
+         Reciprocators = R, 
+         `Unclassified*` =`<NA>`)%>%
+  select(Club,Beneficiaries,Reciprocators,Helpers,`Unclassified*`)->t
+  bind_rows(t,tibble(Club = NA,Beneficiaries=sum(t$Beneficiaries),Reciprocators=sum(t$Reciprocators),Helpers=sum(t$Helpers),`Unclassified*`=sum(t$`Unclassified*`)))->t
+  kableExtra::kbl(t,caption = "Count of Member Types",booktabs = T,align = c("l",rep("c",4)))%>%
+  footnote(general = "* Members who only participate in one order do not have a Markov matrix and thus remain unclassified",
+           threeparttable = TRUE)%>%
+    pack_rows("Totals",36,36)
+```
+

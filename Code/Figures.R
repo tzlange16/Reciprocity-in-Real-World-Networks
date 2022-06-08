@@ -46,8 +46,8 @@ rownames(m)<-purchasers#name rows as purchasers
 g<-graph_from_incidence_matrix(m)#create graph from matrix
 #plot first graph as bipartite network of items and purchasers
 plot.igraph(g,layout = layout.bipartite(g),vertex.label = NA,edge.color = "grey25", vertex.shape = c(rep("circle",9),rep("square",9)),vertex.color = c(rep("red",9),rep("blue",9)))
-legend(-.75,-1,legend = c("Members","Items"),pch = c(21,22),cex=2,border = "white",bg = "transparent",box.lty=0,pt.bg = c("red","blue"),pt.cex = 3.5)#add legend
-text(0,1.65,labels = "A",cex=3)#add label
+legend(-1,-1,horiz = TRUE,legend = c("Members","Items"),pch = c(21,22),cex=1.75,border = "white",bg = "transparent",box.lty=0,pt.bg = c("red","blue"),pt.cex = 2.5)#add legend
+text(-1,1.35,labels = "A",cex=2)#add label
 bipartite.projection(g)$proj1 ->up#project bipartite into item and member networks
 get.adjacency(up,attr = "weight")->m2#get the adjacency of member network to make new undirected member network
 graph_from_adjacency_matrix(m2,mode = "undirected")->up#create undirected member network
@@ -56,7 +56,7 @@ as.matrix(m2)%>%#
   as.data.frame(row.names = TRUE)%>%
   mutate(from=row_number())%>%
   gather(key = "to",value = "n.edges",1:9)%>%
-  filter(n.edges>0)#->edges
+  filter(n.edges>0)->edges
 edge.list <- matrix(ncol = 2)
 for(i in 1:nrow(edges)){
 dyad <- c(edges$from[i],edges$to[i])
@@ -67,19 +67,31 @@ edge.list[-nrow(edge.list),]->edge.list
 graph_from_edgelist(edge.list,directed = FALSE)%>%
   simplify(remove.multiple = FALSE)%>%
   plot(layout = coords,vertex.label = NA,vertex.color = "red",edge.color = "grey25")
-text(0,1.65,labels = "B",cex=3)
+text(-1,1.35,labels = "B",cex=2)
 graph_from_edgelist(edge.list)%>%
   simplify(remove.multiple = FALSE)%>%
   plot.igraph(layout = coords, edge.arrow.size = .5, vertex.label = NA, vertex.color = "red",edge.color = "grey25")
-text(0,1.65,labels = "C",cex=3)
+text(-1,1.35,labels = "C",cex=2)
 lay <- cbind(c(-.5,.5,0),c(-.5,-.5,.5))
 m <- matrix(1,nrow=3,ncol=3)
 row.names(m)<-c("B","H","R")
 colnames(m)<-c("B","H","R")
 g <- graph_from_adjacency_matrix(m)
-plot.igraph(g,layout = lay,edge.loop.angle=c(2.25,0,0,0,.75,0,0,0,4.75),edge.curved=TRUE,vertex.size = 75, vertex.label.color = "black",vertex.label.cex = 2,
-            edge.color = "grey25",vertex.color = "white",vertex.label.degree = c(pi/2,pi/2,-pi/4),vertex.label.family = "Arial",edge.arrow.size=.45)
-text(0,2.1,labels = "D",cex=3)
+set.seed(1)
+edge.arrow.width <- edge.arrow.size <- edge.width <- rnorm(9,2,.5)
+edge.lty <- c(2.25,0,0,0,.75,0,0,0,4.75)
+plot(g, edge.lty=0, edge.arrow.size=0, layout=lay,vertex.size=75,
+     vertex.shape="none",)
+for (e in seq_len(ecount(g))) {
+  graph2 <- delete.edges(g, E(g)[(1:ecount(g))[-e]])
+  plot(graph2,edge.arrow.width=edge.arrow.size[e]-1, edge.width = edge.width[e],edge.loop.angle = edge.lty[e],edge.arrow.size=.5,
+       edge.curved=TRUE, layout=lay,edge.color = "grey25",vertex.size=75,vertex.shape="none",
+       vertex.label=NA, add=TRUE)
+}
+plot(delete.edges(g, E(g)[(1:ecount(g))]), edge.lty=0, edge.arrow.size=0, layout=lay,vertex.size=75,
+     vertex.label.color = c("white","black","black"), vertex.label.cex = 2,
+     vertex.color = c("black","white","grey50"),vertex.label.degree = c(pi/2,pi/2,-pi/4),vertex.label.family = "Arial",add=TRUE)
+text(-1,1.70,labels = "D",cex=2)
 
 #Figure 2----
 select(all.clubs,`Club Number`,stab)%>%#select out reciprocity proportions &stability
@@ -111,11 +123,11 @@ fig.text$mean[1]<-"Mean = 0.60"
 group_by(fig,`T-D`)%>%summarize(mean = mean(Value)*100)%>%
   right_join(fig)%>%
 ggplot(aes(y=Value*100,x=as_factor(`T-D`)))+
-  geom_jitter(color = "grey25",alpha = .75,width = .25,shape = 16,height = 0)+
-  scale_y_continuous(limits = c(-1,80),breaks = c(0,20,40,60,80),labels=c("  0"," 40"," 60"," 80"))+
-  geom_errorbar(aes(ymin=mean,ymax=mean),width=1)+
+  geom_violin()+
+  #geom_jitter(color = "grey25",alpha = .75,width = .1,shape = 16,height = 0)+scale_y_continuous(limits = c(-1,80),breaks = c(0,20,40,60,80),labels=c("  0"," 20", " 40"," 60"," 80"))+
+  geom_point(aes(y=mean), shape = 18,size=4)+
   theme_classic()+
-  labs(x="",y="percent of total edges")+
+  labs(x="",y="% of total edges")+
   theme(axis.text.x = element_blank(),
         legend.position = "none",
         strip.text = element_blank(),
@@ -152,7 +164,7 @@ group_by(fig.2,`T-D`)%>%
   geom_violin()+
   geom_point(aes(y=mean), shape = 18,size=4)+
   theme_classic()+
-  labs(x="",y=bquote("Reciprocity C"["v"]))+
+  labs(x="",y=bquote("c"["v"]))+
   theme(axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
         axis.text = element_text(family = "Arial"),

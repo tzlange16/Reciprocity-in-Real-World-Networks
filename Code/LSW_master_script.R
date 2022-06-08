@@ -1,7 +1,6 @@
 #============================================
 # Detecting reciprocity in empirical networks
 #             Master Script
-#         Lange, Smolla, & Waring
 #============================================
 
 #Required Packages
