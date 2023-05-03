@@ -1,12 +1,12 @@
 ---
-title: 'Supplemental Material: Reciprocity supports cooperation in real-world economic interactions'
+title: 'Supplemental Material: Reciprocity supports cooperation in real-world collective action networks'
 header-includes:
       - \usepackage{dcolumn}
-      
 output:
   pdf_document:
     fig_caption: yes
     extra_dependencies: ["float"]
+bibliography: refs.bib     
     
 ---
 
@@ -14,16 +14,25 @@ output:
 knitr::opts_chunk$set(echo = FALSE,warning=FALSE,message=FALSE)
 knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
 library(tidyverse)
+library(stringr)
 library(knitr)
 library(kableExtra)
 library(cowplot)
-
+#reset working directory
+getwd()->wd
+new_wd <- str_remove(wd,"/supplemental materials")
+setwd(new_wd)
 source("Code/k_means.R")
 load("Data/Reciprocity.Rdata")
+load("Data/Sensitivity_model.Rdata")
+load("Data/FC_sensitivity_values.Rdata")
 rename(all.clubs, Club = `Club Number`)->all.clubs
 
 ```
 
+### Sample Characteristics
+
+The clubs in our data set are samples from WEIRD [@apic2020;@hen2020;@hen2010] countries: 2 from Australia, 1 from Canada and the rest from the United States. One software provider gave us access to their whole catalog of groups, which included the 3 from outside of the United States, and the other only gave us access to their clubs located in New England. The sample includes defunct and still functioning clubs (as of the end of the data period), where the average lifespan of defunct clubs was 3.16 years (2.16 SD) and 28.7 orders (21.3 SD), while the censored average lifespan for continuing clubs is 3.24 years (1.38SD) and 46.9 orders (27.9 SD). The average number of members participating in an order is 7.96 for defunct clubs (6.96 SD) and 12.7 for ongoing (9.41 SD). Additionally, the average number of co-purchased items in each order is 3.29 for defunct clubs (4.82 SD) and 11.2 for ongoing clubs (28.9 SD). 
 
 
 ```{r summary stats,warning=FALSE,message=FALSE}
@@ -33,6 +42,7 @@ mutate(all.clubs, Orders = map(graphs, ~length(.x)))%>%
   select(Club,Orders,Members,stab)%>%
   unnest()%>%
   ungroup()%>%
+  mutate_at(.vars = 8:11,.funs = function(x){x*100})%>%
   mutate_at(.vars = 4:11,.funs = round,digits = 2)%>%
   mutate(Club = as_factor(Club))%>%
   select(Club,Orders, Members, pwd,pbd,pwi,pbi,CV.pwd,CV.pbd,CV.pwi,CV.pbi)->t
@@ -40,7 +50,7 @@ mutate(all.clubs, Orders = map(graphs, ~length(.x)))%>%
   colSums(t[,2:3],na.rm = TRUE)->sums
   round(colMeans(t[4:11],na.rm = TRUE),2)->means
   rbind(t,c(36,sums,means))->t
-  kbl(t,booktabs = TRUE,caption = "Reciprocal Edge Classifications and Coefficients of Variation")%>%
+  kbl(t,booktabs = TRUE,caption = "Share-based Reciprocal Edge Classifications and Coefficients of Variation")%>%
     kable_styling(latex_options = c("striped"))%>%
     add_header_above(c(" "=3,"Percent of Total Edges"=4,"Coefficient of Variation"=4))%>%
     pack_rows("Totals",36,36)
@@ -48,7 +58,26 @@ mutate(all.clubs, Orders = map(graphs, ~length(.x)))%>%
   
 ```
 
+```{r robustness summary,warning=FALSE,message=FALSE}
+options(knitr.kable.NA = '')
+filter(sense,analysis == "sens")%>%
+  select(`Club Number`,recip,value)%>%
+  mutate(value = round(value*100,1))%>%
+  spread(recip,value)%>%
+  select(`Club Number`,pwd,pbd,pwi,pbi)->t
+  colnames(t)[2:5]<-c("DWR","DBR","IWR","IBR")
+  round(colMeans(t[2:5],na.rm = TRUE),1)->means
+  rbind(t,c(NA,means))->t
+  kbl(t,booktabs = TRUE,caption = "Purchase Order-based Reciprocal Edge Classifications")%>%
+    kable_styling(latex_options = c("striped"))%>%
+    add_header_above(c(" "=1,"Percent of Total Edges"=4))%>%
+    pack_rows("Means",14,14)
+  
+```
+
+
 ```{r Mixed effects 1, echo = FALSE, results='asis'} 
+#All Edges
 select(all.clubs,Club,degree.balance)%>%#select degree balance data
   unnest()%>%#unnest
   group_by(Club,Purchaser)%>%#group by club name and purchaser
@@ -58,43 +87,60 @@ rename(RE,`Out Degree` = Out.Degree,
        `In Degree` = In.Degree)->RE
 
 lme4::lmer(`Out Degree`~`In Degree` + (1|Club) ,data=RE)->re.model
-
+#Single Assistance Edges
 select(all.clubs,Club,single.assistance)%>%#select singular assistance data
   unnest()->RE.SA#unnest data
 rename(RE.SA,`Out Degree` = Given,
        `In Degree` = Received)->RE.SA
-RE.SA.model <- lme4::lmer(`Out Degree`~`In Degree`+(1|Club),data = RE.SA)#estimate Fixed effects model
+RE.SA.model <- lme4::lmer(`Out Degree`~`In Degree`+(1|Club),data = RE.SA)#estimate mixed effects model
+#Sensitivity Analysis
+select(sense_edges,parent_id,edges)%>%
+  unnest()%>%
+  unnest()->model_edges
+  
+model_edges%>%group_by(parent_id,from)%>%
+  count(name = "Out Degree")->out
+model_edges%>%group_by(parent_id,to)%>%
+  count(name = "In Degree")->in.d  
+  
+inner_join(out,in.d,by=c("from"="to","parent_id"))%>%
+  rename(Club = parent_id)->rob_edges
+
+lme4::lmer(`Out Degree` ~ `In Degree` + (1|Club),data = rob_edges)->rob_model
 
 broom.mixed::tidy(re.model)%>%filter(effect == "fixed")->ae
 broom.mixed::tidy(RE.SA.model)%>%filter(effect == "fixed")->sae
+broom.mixed::tidy(rob_model)%>%filter(effect == "fixed")->rae
 sd_re<-round(as.numeric(attributes(lme4::VarCorr(re.model)$Club)$stddev), 2)
 sd_sa_re<-round(as.numeric(attributes(lme4::VarCorr(RE.SA.model)$Club)$stddev), 2)
+sd_ro_re<-round(as.numeric(attributes(lme4::VarCorr(rob_model)$Club)$stddev), 2)
 REML<-round(re.model@devcomp$cmp[7],2)
 REML_sa <- round(RE.SA.model@devcomp$cmp[7],2)
-mod.stats <- tribble(~stat, ~re.model, ~RE.SA.model,
-                     "Random Effects:",NA,NA,
-                     "Clubs",35L,13L,
-                     "Standard Deviation",sd_re,sd_sa_re,
-                     "Observations", nrow(RE),nrow(RE.SA),
-                     "REML",REML,REML_sa,
-                     "AIC",round(AIC(re.model),2),round(AIC(RE.SA.model),2))
+REML_rob<- round(rob_model@devcomp$cmp[7],2)
+mod.stats <- tribble(~stat, ~re.model, ~RE.SA.model,~rob_model,
+                     "Random Effects:",NA,NA,NA,
+                     "Standard Deviation",sd_re,sd_sa_re,sd_ro_re,
+                     "Clubs",35L,35L,13L,
+                     "Observations", nrow(RE),1113,263,
+                     "REML",REML,REML_sa,REML_rob,
+                     "AIC",round(AIC(re.model),2),round(AIC(RE.SA.model),2),round(AIC(rob_model),2))
 
-stargazer::stargazer(re.model,RE.SA.model,
-                     coef = list(ae$estimate,sae$estimate),
-                     se = list(ae$std.error,sae$std.error),
+stargazer::stargazer(re.model,RE.SA.model,rob_model,
+                     coef = list(ae$estimate,sae$estimate,rae$estimate),
+                     se = list(ae$std.error,sae$std.error,rae$std.error),
                      no.space = TRUE,
                      header=FALSE,
                      align = TRUE,
                      single.row = FALSE,
                      font.size = "small",
                      intercept.bottom = F,
-                     column.labels = c("All Edges","Singular Assistance\nEdges"),
+                     column.labels = c("All Edges","Singular Assistance\nEdges","Robustness Check"),
                      omit.table.layout = "s",
                      dep.var.labels = "Out Degree",
                      covariate.labels = c("Global Mean Intercept","In Degree"),
                      # ...but supply your own that you created (with random effects)
                      add.lines = lapply(1:nrow(mod.stats), function(i) unlist(mod.stats[i, ])),
-                     title = "Mixed Effects Model")
+                     title = "Mixed Effects Models")
 
 ```
 
@@ -110,6 +156,7 @@ mutate(all.clubs, centers = map(degree.balance, ~pluck(k_means(.x$SPR),"centers"
   kableExtra::kbl(caption = "SPR Cluster Centers",align = c("l","c","c","c"),booktabs = TRUE)
 
 ```
+
 
 ```{r member types,echo = FALSE,warning=FALSE,fig.align='center'}
 select(all.clubs,Club, member.types)%>%
@@ -129,3 +176,4 @@ select(all.clubs,Club, member.types)%>%
     pack_rows("Totals",36,36)
 ```
 
+### References
