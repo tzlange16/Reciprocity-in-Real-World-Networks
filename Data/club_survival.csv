@@ -1,0 +1,36 @@
+name,Club Number,Status 1,Status 2,Exogenous Cause?
+b1buyingclub,24,Success,Continue,No
+boondocks,16,Success,Continue,No
+citruscountycoop,25,Failed,Long Close,Yes
+feedmefoodclub,13,Success,Continue,NA
+foxislands,21,Success,Continue,NA
+graintrain.1,17,Failed,Long Close,Yes
+graintrain.2,28,Failed,Long Close,Yes
+graintrain.alpena,2,Failed,Long Close,Yes
+graintrain.stignace,6,Failed,Long Close,Yes
+greatfalls,11,Success,Transitioned,NA
+greensngoodness,35,Success,Continue,NA
+indianrockscoop,23,Success,Continue,NA
+klfi,15,Success,Transitioned,NA
+kootenayorganiccoop,12,Failed,Still-Born,NA
+oronolocal,14,Failed,Long Close,Yes
+pittsfield,9,Failed,Long Close,Yes
+realfoodobc,33,Failed,Still-Born,NA
+rosirotiwholelife,3,Success,Continue,NA
+tims,26,Success,Continue,NA
+valleyrealfood,34,Failed,Still-Born,NA
+vharc,4,Success,Continue,NA
+a2u2.networkable,29,Success,Continue,NA
+chebeague.networkable,18,Failed,Long Close,NA
+goodfood.networkable,8,Failed,Long Close,NA
+granbyfoodcoop.networkable,22,Success,Continue,NA
+greenarrow.networkable,5,Failed,Long Close,NA
+healthyhomemakers.networkable,19,Success,Continue,NA
+mixednutsfood.networkable,20,Failed,Long Close,NA
+monument_hill.networkable,31,Success,Continue,NA
+nek_mommas.networkable,30,Failed,Long Close,NA
+oakhillfoodcoop.networkable,32,Success,Continue,NA
+smbc1.networkable,27,Failed,Long Close,NA
+thelongislandbuyingclub.networkable,1,Failed,Long Close,NA
+wildhoney.networkable,7,Failed,Long Close,NA
+smfi,10,Success,Continue,

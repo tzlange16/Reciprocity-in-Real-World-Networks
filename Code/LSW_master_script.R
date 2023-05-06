@@ -129,11 +129,39 @@ dplyr::select(all.clubs,`Club Number`,markov.matrix)%>%#select markov probabilit
   spread(to,mean)%>%#spread into matrix form
   dplyr::select(from,N,H,R,B)#reorder columns in more intuitive form
 
-save(all.clubs, file = "Reciprocity.Rdata")
+save(all.clubs, file = "Data/Reciprocity.Rdata")
 
+#models
+select(all.clubs,c_number,degree.balance,Status)%>%
+  unnest()%>%
+  group_by(c_number,Purchaser,Status)%>%
+  summarize(In = sum(In.Degree),Out = sum(Out.Degree))->ancova.1
 
+summary(lme4::lmer(Out~In*Status+(1|c_number),data=ancova.1))
 
+select(all.clubs,c_number,single.assistance,Status)%>%
+  unnest()->ancova.2
 
+summary(lme4::lmer(Given~Received*Status+(1|c_number),data=ancova.2))
 
+select(all.clubs,c_number,Status,member.types)%>%
+  unnest()%>%
+  group_by(c_number,Status,type)%>%
+  count()%>%
+  filter(!is.na(type))%>%
+  group_by(c_number)%>%
+  mutate(t=sum(n))%>%
+  mutate(p=n/t*100)%>%
+  ggplot(aes(x=Status,y=p))+
+  geom_boxplot()+
+  facet_wrap(.~type)
 
+select(all.clubs,c_number,Status,stab)%>%
+  unnest()%>%
+  mutate(ur = 1-pwd-pwi-pbd-pbi)%>%
+  gather("type","p",7:11)%>%
+  ggplot(aes(x=Status,y=p))+
+  geom_boxplot()+
+  stat_summary(geom="point",fun=mean,shape=12)+
+  facet_wrap(.~type)
 
