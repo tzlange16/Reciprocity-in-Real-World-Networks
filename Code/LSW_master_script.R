@@ -152,16 +152,18 @@ select(all.clubs,c_number,Status,member.types)%>%
   group_by(c_number)%>%
   mutate(t=sum(n))%>%
   mutate(p=n/t*100)%>%
-  ggplot(aes(x=Status,y=p))+
-  geom_boxplot()+
+  ggplot(aes(x=Status,y=p,color=Status))+
+  geom_violin()+
+  stat_summary(fun = mean,geom = "point")+
   facet_wrap(.~type)
 
 select(all.clubs,c_number,Status,stab)%>%
   unnest()%>%
-  mutate(ur = 1-pwd-pwi-pbd-pbi)%>%
+  mutate(UR = 1-pwd-pwi-pbd-pbi)%>%
+  rename(DWR=pwd,IWR=pwi,DBR=pbd,IBR=pbi)%>%
   gather("type","p",7:11)%>%
-  ggplot(aes(x=Status,y=p))+
-  geom_boxplot()+
-  stat_summary(geom="point",fun=mean,shape=12)+
+  ggplot(aes(x=Status,y=p,color=Status))+
+  geom_violin()+
+  stat_summary(geom="point",fun=mean)+
   facet_wrap(.~type)
 
